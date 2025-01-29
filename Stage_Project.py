@@ -30,14 +30,13 @@ License: MIT
     AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
     LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-    SOFTWARE.   
-
+    SOFTWARE.
 
 Notes:
 - This script copies the entire structure into a new folder, which is normally used for processing just before deployment.
 - The directory used is the same as the project's main directory. 
 - *** USE WITH CAUTION *** It will erase any existing directory in the staging folder with that name if it already exists. 
-- It is designed to work with the accompanying Unused_assets_Gem.py, which removes unused assets from your project.
+- It is designed to work with the accompanying Unused_assets.py, which removes unused assets from your project.
 - Don't forget to open the staging directory project as the current project before deployment :)
 """
 
@@ -80,8 +79,13 @@ def browse_directory():
     """Opens a directory selection dialog."""
     directory = filedialog.askdirectory()
     if directory:
-        directory_entry.delete(0, tk.END)
-        directory_entry.insert(0, directory)
+        # Validate the directory
+        credits_path = os.path.join(directory, "credits.html")
+        if os.path.exists(credits_path):
+            directory_entry.delete(0, tk.END)
+            directory_entry.insert(0, directory)
+        else:
+            messagebox.showerror("Error", "Invalid RPG Maker MZ project directory: 'credits.html' not found.")
 
 def browse_staging_directory():
     """Opens a directory selection dialog for the staging directory."""
@@ -150,8 +154,9 @@ def copy_and_analyze(repo_path, staging_path):
     print(f'Passing {staging_path} to unused assets finder')
     # Get the current directory of this program
     current_directory = get_current_directory()
-    unused_assets_path = os.path.join(current_directory, "Unused_assets_Gem.py")
+    unused_assets_path = os.path.join(current_directory, "Unused_assets.py")
     app.after(0, lambda: subprocess.Popen(["python", unused_assets_path, staging_path]))
+    app.after(0, lambda: messagebox.showinfo("Success", "Game copied to staging directory and unused assets removed."))
     app.after(0, lambda: app.destroy())  # Close the GUI
     
 app = tk.Tk()

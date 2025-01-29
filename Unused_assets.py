@@ -233,6 +233,7 @@ def find_unused_files(directory, progress_callback):
     if os.path.exists(plugins_file):
         animation_ids_from_plugins = get_animation_ids(plugins_file)
         animations.update(animation_ids_from_plugins)  # Add the extracted IDs to the animations list
+
     # --- Process Maps to identify used tilsets -> tileset images
     print ('Processing Maps for Tilesets')
     used_tilesets = set()
@@ -289,7 +290,7 @@ def find_unused_files(directory, progress_callback):
         test_count += 1
         progress_callback(len(code_files),len(used_files), len(files))
 
-    # --- Process Animations ---
+    # --- Process Animations, looking for efkefc effect files, and any embedded sound effects ---
     print("Checking for Used Animations")
     for i, animation_id in enumerate(animations):
         try:
@@ -311,7 +312,7 @@ def find_unused_files(directory, progress_callback):
                     used_files.add(effect_file)
                     if effect_file in files:
                         files.remove(effect_file)
-                    # 3. Extract sound file names
+                    # 4. Extract sound file names
                     sound_files = set()
                     for timing in animation_data.get('soundTimings', []):
                         if isinstance(timing, dict):  # Check if timing is a dictionary
@@ -331,7 +332,7 @@ def find_unused_files(directory, progress_callback):
                                         print(f'se is not a dict: {se}')  # Debug print for non-dictionary se
                         else:
                             print('Timing data is something else')
-                    # 4. Add sound files to used_files
+                    # 5. Add sound files to used_files
                     for sound_file in sound_files:
                         audio_file = os.path.join(directory, 'audio', 'se', sound_file + '.ogg').replace("\\", "/")
                         used_files.add(audio_file)
@@ -342,20 +343,20 @@ def find_unused_files(directory, progress_callback):
             print(f"Error processing animation {animation_id}: {e}")
     test_count += 1
     progress_callback(len(code_files),len(used_files), len(files))
+
     # --- Now that we have our used efkefc from the animations and we've identified every other used file, process them looking for used images ---
     print("Checking for Used Effects and Images")
     for i, effect_file in enumerate(used_files.copy()):  # Iterate over a copy to avoid modification issues
         if effect_file.endswith('.efkefc'):
             try:
+                # Parse the .efkefc file to find any referenced .png files
                 png_files = extract_png_filenames(effect_file)
                 for png_file in png_files:
                     full_path = os.path.join(directory, 'effects', png_file).replace("\\", "/")
-                    print(f'Checking {full_path}')
                     if full_path in files:
                         used_files.add(full_path)
                         if file in files:
                             files.remove(full_path)
-                            print(f'Adding {full_path}')
             #try:
             #    content = get_content_from_file(effect_file)
             #    for i, file in enumerate(used_files.copy()):
@@ -405,8 +406,7 @@ def main(staging_path):
         output_files = output_text.get(1.0, tk.END).strip().split('\n')
         result = messagebox.askyesno("Delete Files", "Do you want to delete the unused files?")
         if result:
-            total_files = len(unused_files)
-            print(f'Deleting {total_files} unused files')
+            print(f'Deleting {len(files)} unused files')
             thread = Thread(target=delete_unused_files, args=[output_files])
             thread.start()
 

@@ -2,7 +2,7 @@
 
 This repository contains two Python scripts designed to help RPG Maker MZ developers manage and clean up unused assets in their projects:
 
-## Unused_assets_Gem.py
+## Unused_assets.py
 ## Stage_Project.py
 
 These scripts copy your RPG Maker MZ project directory and scans it to identify unused files (images, audio, etc.) that are not referenced in your game's data files or code. 
@@ -20,32 +20,31 @@ It provides options to preview the list of unused files and/or permanently delet
 
 **Usage:**
 
-1.  Place `Stage_Project.py` and `Unused_assets_Gem.py` in the same directory, doesn't matter where.
-2.  Run the script from the command line: `python Stage_Project.py`. Optionally run `python Unused_assets_Gem.py` to remove unused files if you already have a project staging directory
+1.  Place `Stage_Project.py` and `Unused_assets.py` in the same directory folder, doesn't matter where.
+2.  Run the script from the command line: `python Stage_Project.py`. Stage_Project will hand over the staging folder to Unused_assets.
+    Optionally run `python Unused_assets.py` to remove unused files if you already have a project staging directory
 3.  Follow the on-screen prompts to select your project directory and choose whether to preview or delete unused files.
 
 ## Stage_Project.py
-
 This script automates the process of staging your RPG Maker MZ project for deployment. It can perform various tasks, including:
 
 *   Copying your project to a new staging directory.
-*   Running `Unused_assets_Gem.py` to remove unused files.
+*   Running `Unused_assets.py` to remove unused files.
 
 **Features:**
 
 *   Automates project staging.
-*   Integrates with `Unused_assets_Gem.py` for asset cleanup.
+*   Integrates with `Unused_assets.py` for asset cleanup.
 *   Can be customized for your specific deployment needs.
 
 **Usage:**
 
-1.  Place `Stage_Project.py` in the same directory as `Unused_assets_Gem.py`.
+1.  Place `Stage_Project.py` in the same directory as `Unused_assets.py`.
 2.  Run the script from the command line: `python Stage_Project.py`
 3.  The script will prompt you for the source and destination directories and perform the staging process.
-4.  As written it always runs `Unused_assets_Gem.py`. This is a non-destructive scan for unused files. You must manually decide to delete them. 
+4.  As written, it always runs `Unused_assets.py`. This is a non-destructive scan for unused files. You must manually decide to delete them. 
 
 ## Unused_assets_Gem.py
-
 This script automates the process of removing unreferenced files from your RPG Maker MZ project prior to deployment. Useful either for web deployment on
 a platform like itch.io, or just reducing the overall footprint of your project. You might have 1000+ unused files if you start from a full RPG Maker MZ template.
 This program performs various tasks, including:
@@ -60,14 +59,13 @@ This program performs various tasks, including:
 
 **Usage:**
 
-1.  Place `Stage_Project.py` in the same directory as `Unused_assets_Gem.py`.
-2.  Run the script from the command line: `python Unused_assets_Gem.py`. Note that it will also run automatically if `Stage_Project.py` is used.
-3.  If run directly, will prompt you for the project's base directory. Will automatically get the directory if using `Stage_Project.py`.
+1.  Place `Stage_Project.py` in the same directory as `Unused_assets.py`.
+2.  Run the script from the command line: `python Unused_assets.py`. Note that it will also run automatically from `Stage_Project.py`.
+3.  If run directly, will prompt you for the project's base directory. Will automatically get the directory from `Stage_Project.py` if you ran it.
 4.  Perform a non-destructive scan for unused files, listing the files it determined were unused. You must manually decide to delete them.
 5.  Recommend you scan that list for files you know are required before deletion. If you need to mark some of them as used:
 	a. Use MaterialBase.json from the RPG Maker MZ program's dlc folder (`RPG Maker MZ\dlc\BasicResources\plugins\official`) or
 	b. Use `@requiredAssets` in any associated js plugin.
 
 ## License
-
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

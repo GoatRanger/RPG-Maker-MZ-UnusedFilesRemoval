@@ -44,7 +44,7 @@ This script automates the process of staging your RPG Maker MZ project for deplo
 3.  The script will prompt you for the source and destination directories and perform the staging process.
 4.  As written, it always runs `Unused_assets.py`. This is a non-destructive scan for unused files. You must manually decide to delete them. 
 
-## Unused_assets_Gem.py
+## Unused_assets.py
 This script automates the process of removing unreferenced files from your RPG Maker MZ project prior to deployment. Useful either for web deployment on
 a platform like itch.io, or just reducing the overall footprint of your project. You might have 1000+ unused files if you start from a full RPG Maker MZ template.
 This program performs various tasks, including:

@@ -33,7 +33,7 @@ License: MIT
     SOFTWARE.
 
 Notes:
-- This script copies the entire structure into a new folder, which is normally used for processing just before deployment.
+- This script copies the entire project structure into a new folder, which you should use to run the Deployment option on.
 - The directory used is the same as the project's main directory. 
 - *** USE WITH CAUTION *** It will erase any existing directory in the staging folder with that name if it already exists. 
 - It is designed to work with the accompanying Unused_assets.py, which removes unused assets from your project.
@@ -80,12 +80,12 @@ def browse_directory():
     directory = filedialog.askdirectory()
     if directory:
         # Validate the directory
-        credits_path = os.path.join(directory, "credits.html")
+        credits_path = os.path.join(directory, "game.rmmzproject")
         if os.path.exists(credits_path):
             directory_entry.delete(0, tk.END)
             directory_entry.insert(0, directory)
         else:
-            messagebox.showerror("Error", "Invalid RPG Maker MZ project directory: 'credits.html' not found.")
+            messagebox.showerror("Error", "Invalid RPG Maker MZ project directory: 'game.rmmzproject' not found.")
 
 def browse_staging_directory():
     """Opens a directory selection dialog for the staging directory."""
@@ -116,7 +116,6 @@ def copy_and_analyze(repo_path, staging_path):
     print (f'Source: {repo_path} -> {staging_path}')
     skip_dirs = ['.git','.vs','DatabaseCleanUpTool','save']
     file_count = 0
-    total_bytes = 0
     copied_files = 0
     for root, _, files in os.walk(repo_path):
         relative_path = os.path.relpath(root, repo_path)

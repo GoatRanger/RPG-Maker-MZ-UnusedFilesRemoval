@@ -1,12 +1,13 @@
 from email.mime import base
 from inspect import _empty
+from msilib import Directory
 import os
 import tkinter as tk
 import json
 import sys
 import re
 from tkinter import ttk, filedialog, messagebox
-from threading import Thread
+from threading import Thread, main_thread
 from unittest.util import sorted_list_difference
 
 """
@@ -37,32 +38,91 @@ License: MIT
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE.
 
-
 Notes:
 - This script scans the project/staging directory for files not referenced in code or database entries.
 - The directory used can be specified via the UI, or passed as a parameter from an external program.
 - It is designed to work with the accompanying Stage_Project.py, which copies your project into a specified deployment folder
 - It provides options to preview or permanently delete unused files.
-- Use with caution as deleted files cannot be easily recovered. Recommeded use is in a staging directory
-  just prior to using the Deployment... option in RPG Maker MZ. Don't forget to open the staging
-  directory as the current project once you're done here :)
+- Use with caution. Recommended use is in a staging directory after using the Deployment... option in RPG Maker MZ.
+- Only tested with a Windows deployment. May not work with other operating systems.
 """
 
-
-
-cached_json = {}
+cached_json = {}  # Cache for JSON files to avoid re-reading them
 app = tk.Tk()
 app.title("RPG Maker MZ Delete Unused Files")
 unused_files = []
 test_count = 0
-files = set()
+unused_files = set()
 used_files = set()
 code_files = set()
 animations = set()
 
+def get_used_plugins(directory):
+    """
+    Finds and returns a list of used plugins in an RPG Maker MZ project.
+
+    This function reads the 'plugins.js' file in the specified directory
+    and extracts the names of the used plugins. It always includes 'plugins.js'
+    and 'main.js' as they are essential for the project and include the names
+    for any plugins, including the RMMZ Core plugins in main.js.
+
+    Args:
+        directory: The directory containing the RPG Maker MZ project files.
+
+    Returns:
+        A list of used plugin filenames.
+    """
+    used_plugins = []
+    plugins_file = os.path.join(directory, "js", "plugins.js").replace("\\", "/")
+    if os.path.exists(plugins_file):
+        try:
+            # Read the content of plugins.js
+            with open(plugins_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            # Extract the valid JSON string using string manipulation
+            start_index = content.index('[')  # Find the start of the JSON array
+            end_index = content.rindex(']') + 1  # Find the end of the JSON array
+            json_string = content[start_index:end_index]
+
+            # Load the JSON string as a JSON object
+            plugins_data = json.loads(json_string)
+
+            # Extract plugin names from the JSON data
+            for plugin in plugins_data:
+                used_plugins.append(f"plugins/{plugin['name']}.js")
+            print(f"Found {len(used_plugins)} plugins in plugins.js")
+        except (json.JSONDecodeError, ValueError) as e:
+            print(f"Error loading plugins.js: {e}")
+            #
+    used_plugins.append('plugins.js')  # Always include plugins.js
+    used_plugins.append('main.js')  # Always include main.js)
+    # --- Process main.js for core references ---
+    main_file = os.path.join(directory, 'js', 'main.js').replace("\\", "/")
+    main_content = get_content_from_file(main_file)
+    main_files = re.findall(r'(?<=\'|")([^\'"]+\.(?:js|json))\"',main_content)
+    for file in main_files:
+        # We prepend 'js/' to the file name later to match the directory structure
+        if file.startswith('js/'):
+            file = file[3:]
+        used_plugins.append(file)
+    return used_plugins
+
 # --- Find default animations defined by Visustella Battle Core plugin, if present
 def get_animation_ids(file_path):
-    """Loads plugins.js as a plain text file and extracts animation IDs using string patterns."""
+    """
+    Extracts animation IDs from a file.
+
+    This function reads the content of the specified file, searches for
+    animation IDs using predefined regular expression patterns, and returns
+    a set of unique animation IDs found in the file.
+
+    Args:
+        file_path: The path to the file to extract animation IDs from.
+
+    Returns:
+        A set of unique animation IDs found in the file.
+    """
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             content = f.read()
@@ -90,7 +150,19 @@ def get_animation_ids(file_path):
         return ()
 
 def load_animations_json(directory):
-    """Loads the Animations.json file and returns a list of (effectName, id) tuples."""
+    """
+    Loads animation data from Animations.json.
+
+    This function reads the `Animations.json` and extracts relevant 
+    animation data, returning it as a list of tuples. Each tuple 
+    contains the animation's effect name and its corresponding ID.
+
+    Args:
+        directory: The directory containing the `Animations.json` file.
+
+    Returns:
+        A list of tuples, each containing an animation's effect name and ID.
+    """
     animations_file = os.path.join(directory, "Animations.json").replace("\\", "/")
     if os.path.exists(animations_file):
         animations_data = load_cached_json(animations_file)
@@ -98,7 +170,20 @@ def load_animations_json(directory):
     return []
 
 def extract_key_value(data, key):
-    """Recursively extracts the value associated with a given key from a nested dict or list."""
+    """
+    Recursively extracts values associated with a key from nested data.
+
+    This function searches a nested dictionary or list for a specific key
+    and returns the corresponding value. It handles nested structures by
+    recursively searching through dictionaries and lists within the data.
+
+    Args:
+        data: The nested dictionary or list to search.
+        key: The key to search for.
+
+    Returns:
+        The value associated with the key, or None if the key is not found.
+    """
     if isinstance(data, dict):
         for k, v in data.items():
             if k == key:
@@ -116,8 +201,19 @@ def extract_key_value(data, key):
 
 def search_content_for_file(content, source_file, target_file):
     """
-    Searches the content of the specified source for references to another file.
+    Checks if a file references another file.
 
+    This function searches the content of a source file for any references
+    to a target file. It handles different file types and search patterns
+    to accurately identify file references.
+
+    Args:
+        content: The content of the source file.
+        source_file: The path to the source file.
+        target_file: The path to the target file.
+
+    Returns:
+        True if the source file references the target file, False otherwise.
     """
     if source_file.endswith(".efkefc"):
         if target_file.endswith('.png'):
@@ -130,10 +226,10 @@ def search_content_for_file(content, source_file, target_file):
         base_file = os.path.basename(target_file)
         name_file = os.path.splitext(base_file)[0]
         search_patterns = [
-            f'\"{name_file}\"',  # Fully quoted
-            f'/{name_file}\"',  # Subdir form
-            f"{name_file}\\",  # Trailing Backslash
-            base_file  # Exact match
+            f'\"{name_file}\"',  # Fully quoted, without file extension
+            f'/{name_file}',  # Subdir form, without file extension
+            f"{name_file}\\",  # Trailing Backslash, without file extension
+            base_file  # Exact match with file extension
         ]
         for pattern in search_patterns:
             if pattern in content:
@@ -141,14 +237,39 @@ def search_content_for_file(content, source_file, target_file):
         return False
 
 def get_content_from_file(file_path):
-    """Reads the content of a file and handles potential encoding issues."""
+    """
+    Reads and decodes the content of a file.
+
+    This function reads the raw data from a file in binary mode,
+    removes any null bytes, and then decodes the data using
+    Latin-1 encoding (with error handling) to ensure proper
+    text extraction.
+
+    Args:
+        file_path: The path to the file to read.
+
+    Returns:
+        The decoded text content of the file.
+    """
     with open(file_path, 'rb') as f:
         raw_data = f.read()
         text_content = raw_data.replace(b'\x00', b'').decode('latin1', errors='ignore')
     return text_content
 
 def load_cached_json(file_path):
-    """Loads a JSON file and caches it for future use."""
+    """
+    Loads and caches JSON files for reuse.
+
+    This function loads a JSON file and stores it in a cache
+    to avoid redundant file reads. If the file has already been
+    loaded, it retrieves the data from the cache.
+
+    Args:
+        file_path: The path to the JSON file.
+
+    Returns:
+        The data loaded from the JSON file.
+    """
     if file_path not in cached_json:
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
@@ -159,6 +280,19 @@ def load_cached_json(file_path):
     return cached_json[file_path]
 
 def extract_png_filenames(efkefc_path):
+    """
+    Extracts PNG filenames from an efkefc file.
+
+    This function reads the binary data of an efkefc file, extracts potential
+    filenames based on ASCII and UTF-16 encoding patterns, and returns a list
+    of PNG filenames found within the file.
+
+    Args:
+        efkefc_path: The path to the efkefc file.
+
+    Returns:
+        A list of PNG filenames.
+    """
     with open(efkefc_path, "rb") as f:
         binary_data = f.read()
 
@@ -176,27 +310,37 @@ def extract_png_filenames(efkefc_path):
 
     return png_files
 
-def find_unused_files(directory, output_text, progress_callback):
+def find_unused_files(test_count, directory, output_text, progress_callback):
     """
     Finds unused files in an RPG Maker MZ project directory.
 
     Args:
+        test_count: A counter for tracking the progress of the file analysis.
         directory: The root directory of the project.
+        output_text: The text box to display the output.
         progress_callback: A function to update progress.
 
     Returns:
-        A list of unused files.
+        A tuple containing:
+        - A list of unused files.
+        - A set of used files.
+        - A dictionary of file references.
+        - A dictionary of files and where they are used.
     """
-    global test_count
-    global files
+    global unused_files
     global used_files
     global code_files
     global animations
     file_references = {}
-    used_references = {}
+    files_used_in = {}
 
     animations_lookup = load_animations_json(os.path.join(directory, 'data'))
     output_text.insert(tk.END, "Cataloguing Files\n")
+
+    # Build initial set of unused files, excluding the root directory,
+    # the 'DatabaseCleanUpTool' directory, and any files starting 
+    # with '.' (assumed to be generated by external tools).
+    # Also populate the file_references dictionary with root files.
     for subdir, _, subfiles in os.walk(directory):
         if 'DatabaseCleanUpTool' in subdir:
             continue  # Don't include the DatabaseCleanUpTool directory
@@ -205,23 +349,71 @@ def find_unused_files(directory, output_text, progress_callback):
         for file in subfiles:
             file_path = os.path.join(subdir, file).replace("\\", "/")
             # Keep the root directory files; process js and json along with rest of the code files
-            if subdir == directory and not file.endswith(('.js','.json')):
+            if subdir == directory:
                 # We know that all of the files in the base directory are used, so we can skip them
                 used_files.add(file_path)
                 file_references['root'].add(file_path)
-                if file_path not in used_references:
-                    used_references[file_path] = set()
-                used_references[file_path].add('root')
+                if file_path not in files_used_in:
+                    files_used_in[file_path] = set()
+                files_used_in[file_path].add('root')
                 continue
-            # Animations and Tilesets are just used as lookups, otherwise they'd include all animations and tilesets, regardless of usage
-            if file.endswith(('.js', '.json')) and 'Animations.json' not in file and 'Tilesets.json' not in file:
+            if not file.endswith("rmmzsave"):
+                unused_files.add(file_path)
+    total_files = len(unused_files)
+
+    # --- Process plugins.js for used plugins ---
+    output_text.insert(tk.END, "Processing plugins.js for used plugins\n")
+    used_plugins = get_used_plugins(directory)
+    # Add the plugin .js files to used_files and code_files
+    for plugin_name in used_plugins:
+        plugin_file = os.path.join(directory, 'js', plugin_name).replace("\\", "/")
+        code_files.add(plugin_file)
+        used_files.add(plugin_file)
+        if plugin_file not in file_references:
+            file_references[plugin_file] = set()
+        file_references[plugin_file].add('.')
+        if plugin_file in unused_files:
+            unused_files.remove(plugin_file)
+        if plugin_file not in files_used_in:
+            files_used_in[plugin_file] = set()
+        files_used_in[plugin_file].add('.')
+    progress_callback(test_count, len(code_files),len(used_files), len(unused_files))
+
+    # --- Find all js/json in data directory ---
+    for subdir, _, subfiles in os.walk(os.path.join(directory, 'data')):
+        for file in subfiles:
+            if file.endswith('.js') or file.endswith('.json'):
+                file_path = os.path.join(subdir, file).replace("\\", "/")
                 code_files.add(file_path)
-            elif not file.endswith("rmmzsave"):
-                files.add(file_path)
-    total_files = len(files)
-    output_text.insert(tk.END, f"Searching {len(code_files)+2} core files with {total_files} potential references\n")
-    
-    # --- Process JSON files to find used .efkefc files ---
+                used_files.add(file_path)
+                if file_path not in file_references:
+                    file_references[file_path] = set()
+                file_references[file_path].add('.')
+                if file_path in unused_files:
+                    unused_files.remove(file_path)
+                if file_path not in files_used_in:
+                    files_used_in[file_path] = set()
+                files_used_in[file_path].add('.')
+                if file_path in unused_files:
+                    unused_files.remove(file_path)
+        
+    output_text.insert(tk.END, f"Searching {len(code_files)} core files with {total_files} potential references\n")
+    # --- Process main.js for effekseerWasmUrl plugin ---
+    # if we have the effekseerWasmUrl plugin, we need to add it to the used files
+    main_file = os.path.join(directory, 'js', 'main.js').replace("\\", "/")
+    main_content = get_content_from_file(main_file)
+    # If the 'effekseerWasmUrl' plugin is present in main.js,
+    # add it to the used_files set and update tracking dictionaries.
+    if ('effekseerWasmUrl' in main_content):
+        used_files.add('effekseerWasmUrl')
+        if 'effekseerWasmUrl' in unused_files:
+            unused_files.remove('effekseerWasmUrl')
+            if 'effekseerWasmUrl' not in files_used_in:
+                files_used_in['effekseerWasmUrl'] = set()
+            files_used_in['effekseerWasmUrl'].add(main_file)
+
+    # Iterate through JSON files to find animation IDs and add them
+    # to the `animations` set for later processing.
     output_text.insert(tk.END, "Processing JSON files for used animations\n")
     for i, filepath in enumerate(code_files):
         try:
@@ -235,10 +427,9 @@ def find_unused_files(directory, output_text, progress_callback):
                         animations.add(animation_id)
         except Exception as e:
             print(f"Error reading {filepath} while processing JSON files for used animations: {e}")
-    test_count += 1
-    progress_callback(len(code_files),len(used_files), len(files))
+    progress_callback(test_count, len(code_files),len(used_files), len(unused_files))
 
-    # --- Load plugins.js ---
+    # --- Load plugins.js, get referenced animation files ---
     output_text.insert(tk.END, "Getting animations from plugins.js\n")
     plugins_file = os.path.join(directory, "js", "plugins.js").replace("\\", "/")
     if os.path.exists(plugins_file):
@@ -267,66 +458,70 @@ def find_unused_files(directory, output_text, progress_callback):
                         used_tilesets.update(tileset.get('tilesetNames', []))
                         # This is a set, so need to add the list as a tuple to avoid unhashable type error
                         file_references[filepath].add(tuple(tileset.get('tilesetNames',[])))
-                        for tileset_name in tileset.get('tilesetNames',):
-                            if tileset_name == '':
-                                print(f"Warning: Tileset name is empty")
-                            else:
-                                if tileset_name not in used_references:
-                                    used_references[tileset_name] = set()
-                                used_references[tileset_name].add(filepath)
                     else:
                         print(
                             f"Warning: No tileset found with ID {tileset_id} for map {filepath}"
                         )
         except Exception as e:
             print(f"Error reading Map {filepath}: {e}")
-    test_count += 1
-    progress_callback(len(code_files),len(used_files), len(files))
+    progress_callback(test_count, len(code_files),len(used_files), len(unused_files))
 
     # --- Add used tileset PNG files to used_files ---
     for tileset_name in used_tilesets:
         tileset_png = os.path.join(directory, 'img', 'tilesets', tileset_name + '.png').replace("\\", "/")
         used_files.add(tileset_png)
-        if tileset_png in files:
-            files.remove(tileset_png)
-    test_count += 1
-    progress_callback(len(code_files),len(used_files), len(files))
+        if tileset_png in unused_files:
+            unused_files.remove(tileset_png)
+        if tileset_name == '':
+            print(f"Warning: Tileset name is empty")
+        else:
+            if tileset_png not in files_used_in:
+                files_used_in[tileset_png] = set()
+            files_used_in[tileset_png].add(filepath)
+    progress_callback(test_count, len(code_files),len(used_files), len(unused_files))
 
     # --- Process JS/JSON files for the remainder of dependencies ---
     output_text.insert(tk.END, "Reviewing JS/JSON Files\n")
+    outputCount = 0
     for i, filepath in enumerate(code_files.copy()):
         try:
             content = get_content_from_file(filepath)
-            for i, file in enumerate(files.copy()):
+            for i, file in enumerate(unused_files.copy()):
                 if search_content_for_file(content, filepath, file):
+                    if 'GroupB_00' in file:
+                        print(f"Found {file} in {filepath}")
                     used_files.add(file)
                     file_references[filepath].add(file)
-                    if file not in used_references:
-                        used_references[file] = set()
-                    used_references[file].add(filepath)
-                    if file in files:
-                        files.remove(file)
-                    
+                    if file not in files_used_in:
+                        files_used_in[file] = set()
+                    files_used_in[file].add(filepath)
+                    if file in unused_files:
+                        outputCount += 1
+                        unused_files.remove(file)
                     # we need to explicitly add the .info files for locale .pak files, as they don't contain any references to the .info files
                     if file.endswith('.pak'):
                         info_file = file + '.info'
                         used_files.add(info_file)
                         file_references[filepath].add(info_file)
-                        if info_file not in used_references:
-                            used_references[info_file] = set()
-                        used_references[info_file].add(filepath)
-                        if info_file in files:
-                            files.remove(info_file)
+                        if info_file not in files_used_in:
+                            files_used_in[info_file] = set()
+                        files_used_in[info_file].add(filepath)
+                        if info_file in unused_files:
+                            unused_files.remove(info_file)
+            # print(f"----------------------- Processed {filepath} with {outputCount} new references ----------------------")
+            outputCount = 0
+
         except Exception as e:
             print(f"Error reading {filepath} while processing js/json files: {e}")
         test_count += 1
-        progress_callback(len(code_files),len(used_files), len(files))
+        progress_callback(test_count, len(code_files),len(used_files), len(unused_files))
 
-    # --- Process Animations, looking for efkefc effect files, and any embedded sound effects ---
+    # Process animations to identify used.efkefc files and any
+    # embedded sound effects (.ogg files).
     output_text.insert(tk.END, "Checking for Used Animations\n")
     file_references['animations'] = set()
     for i, animation_id in enumerate(animations):
-        try:
+        #try:
             # 1. Load the animation JSON file
             animations_data = load_cached_json(os.path.join(directory, 'data', 'Animations.json'))
 
@@ -343,11 +538,11 @@ def find_unused_files(directory, output_text, progress_callback):
                     effect_file = os.path.join(directory, 'effects', f"{effect_name}.efkefc").replace("\\", "/")
                     used_files.add(effect_file)
                     file_references['animations'].add(effect_file)
-                    if effect_file not in used_references:
-                        used_references[file_path] = set()
-                    used_references[file_path].add(os.path.join(directory, 'data', 'Animations.json'))
-                    if effect_file in files:
-                        files.remove(effect_file)
+                    if effect_file not in files_used_in:
+                        files_used_in[file_path] = set()
+                    files_used_in[file_path].add(os.path.join(directory, 'data', 'Animations.json').replace("\\", "/"))
+                    if effect_file in unused_files:
+                        unused_files.remove(effect_file)
                     # 4. Extract sound file names
                     sound_files = set()
                     for timing in animation_data.get('soundTimings', []):
@@ -356,9 +551,9 @@ def find_unused_files(directory, output_text, progress_callback):
                             se = se_data['name']
                             sound_files.add(se)
                             file_references['animations'].add(se)
-                            if se not in used_references:
-                                used_references[se] = set()
-                            used_references[se].add(os.path.join(directory, 'data', 'Animations.json'))
+                            if se not in files_used_in:
+                                files_used_in[se] = set()
+                            files_used_in[se].add(os.path.join(directory, 'data', 'Animations.json'))
                         elif isinstance(se,str):
                             sound_files.add(se)
                         elif isinstance(timing, list):  # If timing is a list, iterate over it
@@ -369,9 +564,6 @@ def find_unused_files(directory, output_text, progress_callback):
                                             if key == 'name':
                                                 sound_files.add(value)
                                                 file_references['animations'].add(value)
-                                                if value not in used_references:
-                                                    used_references[value] = set()
-                                                used_references[value].add(os.path.join(directory, 'data', 'Animations.json'))
                                     else:
                                         print(f'se is not a dict: {se}')  # Debug print for non-dictionary se
                         else:
@@ -381,19 +573,19 @@ def find_unused_files(directory, output_text, progress_callback):
                         audio_file = os.path.join(directory, 'audio', 'se', sound_file + '.ogg').replace("\\", "/")
                         used_files.add(audio_file)
                         file_references['animations'].add(audio_file)
-                        if audio_file not in used_references:
-                            used_references[audio_file] = set()
-                        used_references[audio_file].add(os.path.join(directory, 'data', 'Animations.json'))
-                        if audio_file in files:
-                            files.remove(audio_file)
+                        if audio_file not in files_used_in:
+                            files_used_in[audio_file] = set()
+                        files_used_in[audio_file].add(os.path.join(directory, 'data', 'Animations.json'))
+                        if audio_file in unused_files:
+                            unused_files.remove(audio_file)
                     break  # Exit the animations_lookup after finding a match
-        except Exception as e:
-            print(f"Error processing animation {animation_id}: {e}")
-    test_count += 1
-    progress_callback(len(code_files),len(used_files), len(files))
+        #except Exception as e:
+         #   print(f"Error processing animation {animation_id}: {e}")
+    progress_callback(test_count, len(code_files),len(used_files), len(unused_files))
 
     # --- Now that we have our used efkefc from the animations and we've identified every other used file, process them looking for used images ---
     output_text.insert(tk.END, "Checking for Used Effects and Images\n")
+
     for i, effect_file in enumerate(used_files.copy()):  # Iterate over a copy to avoid modification issues
         if effect_file.endswith('.efkefc'):
             try:
@@ -402,37 +594,51 @@ def find_unused_files(directory, output_text, progress_callback):
                 png_files = extract_png_filenames(effect_file)
                 for png_file in png_files:
                     full_path = os.path.join(directory, 'effects', png_file).replace("\\", "/")
-                    if full_path in files:
+                    if full_path in unused_files:
                         used_files.add(full_path)
                         file_references['effect_file'].add(png_file)
-                        if png_file not in used_references:
-                            used_references[png_file] = set()
-                        used_references[png_file].add(os.path.join(effect_file))
-                        if file in files:
-                            files.remove(full_path)
+                        if png_file not in files_used_in:
+                            files_used_in[png_file] = set()
+                        files_used_in[png_file].add(os.path.join(effect_file))
+                        if file in unused_files:
+                            unused_files.remove(full_path)
             except Exception as e:
                 print(f"Error reading {effect_file} while checking for used effects and images: {e}")
-        test_count += 1
-        progress_callback(len(code_files),len(used_files), len(files))
-    output_text.insert(tk.END, f'{len(files)} unused files remain')
+    progress_callback(test_count, len(code_files),len(used_files), len(unused_files))
+    output_text.insert(tk.END, f'{len(unused_files)} unused files remain')
 
-    return list(sorted(files)), file_references, used_references
+    return list(sorted(unused_files)), used_files, file_references, files_used_in
 
 def main(staging_path):
-    def select_directory(directory):
-        print(f'Using directory: {directory}')
-        if directory == '':
-            directory = filedialog.askdirectory()
+    # --- GUI Event Handler Functions ---
+    selected_directory = tk.StringVar(value="")
+    def select_directory():
+        staging_path = filedialog.askdirectory()
+        selected_directory.set(staging_path)
+        selected_dir.config(text=f"Selected Directory: {staging_path}")
+        print(f'Using directory: {staging_path}')
+        
+    def run_finder():
+        global unused_files
+        global test_count
+        global used_files
+        global code_files
+        global animations
         progress['value'] = 0
         delete_progress['value'] = 0
+        unused_files = []
+        test_count = 0
+        unused_files = set()
+        used_files = set()
+        code_files = set()
+        animations = set()
         output_text.delete(1.0, tk.END)
-        thread = Thread(target=find_and_display_unused_files, args=(directory,))
+        staging_path = selected_directory.get()
+        print(f'Running unused file finder on {staging_path}')
+        thread = Thread(target=find_and_display_unused_files, args=(staging_path,))
         thread.start()
 
-    def update_progress(code_count, used_count, unused_count):
-        global test_count
-        # Account for Animations and Tilesets, which are handled separately
-        code_count += 2
+    def update_progress(test_count, code_count, used_count, unused_count):
         # Calculate the percentage and update the progress bar
         percentage = (test_count / code_count) * 100
         app.after(0, lambda: progress.config(value=percentage))
@@ -442,25 +648,39 @@ def main(staging_path):
         ))
 
     def find_and_display_unused_files(directory):
-        print(f'File name var: {show_by_filename_var.get()}')
-        unused_files, references, filerefs = find_unused_files(directory, output_text, update_progress)
+        print(f'Finding unused files in {directory}')
+        test_count = 0
+        unused_files, used_files, references, where_used = find_unused_files(test_count, directory, output_text, update_progress)
         if show_references_var.get():
             output_text.insert(tk.END, "\n\n--------------Used File References--------------\n")
             if show_by_filename_var.get():
                 output_str = ""
-                # sorted_list_difference = sorted(filerefs.items())
-                sorted_list_difference = filerefs.items()
+                sorted_list_difference = sorted(where_used.items())
+                #sorted_list_difference = where_used.items()
                 for source_file, used_files in sorted_list_difference:
                     output_str += f"File: {source_file} Used In:\n"
-                    for used_file in used_files:
+                    # Sort used_files, handling tuples and strings separately
+                    sorted_used_files = sorted([f for f in used_files if isinstance(f, str)])  # Sort strings
+                    sorted_tuples = sorted([f for f in used_files if isinstance(f, tuple)])  # Sort tuples
+
+                    # Add "Tilesets: " prefix to each tuple
+                    sorted_used_files += [f"Tilesets: {t}" for t in sorted_tuples]
+                    #output_str += f"  - {sorted_used_files}\n"
+                    for used_file in sorted_used_files:
                         output_str += f"  - {used_file}\n"
                 output_text.insert(tk.END, output_str)
             else:
                 output_str = ""
-                for source_file, used_files in references.items():
-                    output_str += f"Source: {source_file}\n"
-                    output_str += "Used Files:\n"
-                    for used_file in used_files:
+                for source_file, used_files in sorted(references.items(), key=lambda item: item):
+                    output_str += f"Files Used In: {source_file}\n"
+                    # Sort used_files, handling tuples and strings separately
+                    sorted_used_files = sorted([f for f in used_files if isinstance(f, str)])  # Sort strings
+                    sorted_tuples = sorted([f for f in used_files if isinstance(f, tuple)])  # Sort tuples
+                    # Add "Tilesets: " prefix to each tuple
+                    sorted_used_files += [f"Tilesets: {t}" for t in sorted_tuples]
+
+                    #output_str += f"  - {sorted_used_files}\n"
+                    for used_file in sorted_used_files:
                         output_str += f"  - {used_file}\n"
                 output_text.insert(tk.END, output_str)
         output_text.insert(tk.END, "\n\n--------------Unused Files, Marked For Deletion--------------\n")
@@ -470,15 +690,16 @@ def main(staging_path):
             delete_button.pack(pady=5)
 
     def prompt_delete():
-        output_files = output_text.get(1.0, tk.END).strip().split('\n')
         result = messagebox.askyesno("Delete Files", "Do you want to delete the unused files?")
         if result:
-            print(f'Deleting {len(files)} unused files')
-            thread = Thread(target=delete_unused_files, args=[output_files])
+            print(f'Deleting {len(unused_files)} unused files')
+            thread = Thread(target=delete_unused_files, args=[unused_files])
             thread.start()
 
     def delete_unused_files(files):
         for i, file in enumerate(files):
+            if 'GroupB_00' in file:
+                print(f"Deleting {file}")
             try:
                 os.remove(file)
                 output_text.insert(tk.END,file)
@@ -492,6 +713,7 @@ def main(staging_path):
         status_label2.config(text=f'Files Deleted: {count}/{len(files)}')
         app.update_idletasks()
 
+    # --- GUI Element Definitions ---
     def deletion_complete():
         output_text.delete(1.0, tk.END)
         output_text.insert(tk.END, "\n\nUnused files have been deleted.")
@@ -501,10 +723,13 @@ def main(staging_path):
         app.destroy()
 
     frame = tk.Frame(app)
-    frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+    frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True) 
 
-    select_button = tk.Button(frame, text="Select Directory of RPG Maker Project", command=lambda: select_directory(''))
+    select_button = tk.Button(frame, text="Select Directory of RPG Maker Project", command=lambda: select_directory())
     select_button.pack()
+
+    selected_dir = tk.Label(frame, text="Selected Directory: ")
+    selected_dir.pack(pady=5)
 
     show_references_var = tk.BooleanVar(value=False)  # Variable to store checkbox state
     show_references_checkbox = tk.Checkbutton(frame, text="Show Used File References", variable=show_references_var)
@@ -513,6 +738,9 @@ def main(staging_path):
     show_by_filename_var = tk.BooleanVar(value=False)
     show_by_filename_checkbox = tk.Checkbutton(frame, text="Order by filename used, not by where used", variable=show_by_filename_var)
     show_by_filename_checkbox.pack(pady=5)
+
+    run_button = tk.Button(frame, text="Find Unused Files", command=run_finder)
+    run_button.pack(pady=5)
 
     progress = ttk.Progressbar(frame, length=400, mode='determinate')
     progress.pack(pady=10, fill=tk.X)
@@ -546,11 +774,8 @@ def main(staging_path):
     if staging_path == '':
         app.mainloop()
     else:
-        # we don't need the selection button, because we were passed the val as a parameter
-        select_button.pack_forget()
-        # Start the processing in a separate thread to keep the UI responsive
-        thread = Thread(target=lambda: select_directory(staging_path))
-        thread.start()
+        selected_dir.config(text=f"Selected Directory: {staging_path}")
+        selected_directory = tk.StringVar(value=staging_path)
         app.mainloop()  # Start the mainloop to handle UI events
     
 
